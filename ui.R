@@ -123,11 +123,12 @@ Output variable (based on sensory data):<hr>
                                 conditionalPanel(condition = "input.hideplot == false",
                                                  downloadButton('downloadPlot', 'Download Plot'),
                                                  
-                                                 plotOutput("wine_dataPlot", height = 300,
+                                                 withSpinner(plotOutput("wine_dataPlot", height = 300,
                                                             # Equivalent to: click = clickOpts(id = "plot_click")
                                                             click = "plot_click",
                                                             brush = brushOpts(id = "plot1_brush")
-                                                 )),
+                                                 ))
+                                                 ),
                                 
                                 fluidPage(
                                   fluidRow(
@@ -194,8 +195,6 @@ Output variable (based on sensory data):<hr>
                             sidebarLayout(
                               sidebarPanel(
                                 selectInput("PcaSelectedColumns","Select Predictors", choices =columns,multiple = TRUE,selected = columns),
-                                checkboxInput("plotEllipse", "Show the ellipse", value = TRUE),
-                                checkboxInput("plotCircle", "Show the circle", value = TRUE),
                                 
                                 helpText("Based on the WIKI page for PCA, in order to maximize variance, the first weight vector  thus has to satisfy"),
                                 withMathJax(helpText("$$\\ w_{(1)}=\\arg\\max_{||{w}||=1}\\{\\sum_i{(t_i)_{(i)}^2}\\}=\\arg\\max_{||{w}||=1}\\{\\sum_i{(x_{(i)}*w)^2}\\}$$")),
