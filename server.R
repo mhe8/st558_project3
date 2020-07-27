@@ -7,51 +7,66 @@ library(tidyverse)
 library(knitr)
 # library(rgl)
 library(ggfortify)
+library(nnet)
+library(DT)
 # library(ggbiplot)
 
 options(dplyr.print_min = 5)
 options(tibble.print_min = 5)
 opts_chunk$set(message = FALSE, cache = TRUE)
 # knit_hooks$set(webgl = hook_webgl)
+columns <- c("quality","fixed.acidity", "volatile.acidity", "citric.acid", "residual.sugar", "chlorides", "free.sulfur.dioxide","total.sulfur.dioxide", "density","pH", "sulphates", "alcohol" )
+
+
+set.seed(558)
 
 shinyServer(function(input, output, session) {
+
+  trained_model<-NA
   getData <- reactive({
+    #Read the red wine data
+    dataurl="https://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-red.csv"
+    red_wine_data=read.table(dataurl,sep = ";", header=TRUE)
+    red_wine_data['wine_type'] = 'red'
     
-    dataurl="http://www.statsci.org/data/oz/ctsibuni.txt"
-    ctsib=read.table(dataurl,sep="\t",header=TRUE)
+    #Read the white wine data
+    dataurl="https://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-white.csv"
+    white_wine_data=read.table(dataurl,sep = ";", header=TRUE)
+    white_wine_data['wine_type'] = 'white'
     
-    ctsib_ana<-ctsib%>%filter(Age!="NA"&Height!="NA"&Weight!="NA"&Surface!="NA"&Vision!="NA")
+    #Combine the data into one dataframe
+    wine_data = union(red_wine_data, white_wine_data)
     
-    ctsib_ana<-mutate(ctsib_ana,CTSIB=as.factor(CTSIB))
-    ctsib_ana$Sex= as.integer(as.factor(ctsib_ana$Sex))
-    ctsib_ana$Surface= as.integer(as.factor(ctsib_ana$Surface))
-    ctsib_ana$Vision= as.integer(as.factor(ctsib_ana$Vision))
-    ctsib_ana<-mutate(ctsib_ana,BMI=Weight/(Height/100.0)^2)
-    ctsib_ana<-mutate(ctsib_ana,PI=1000*Weight^(1/3)/Height)
+    #Drop rows with NA
+    wine_data_ana<-drop_na(wine_data)
     
+    #Change the column of quality into levels
+    wine_data_ana<-mutate(wine_data_ana,quality_level=as.factor(quality), wine_type = as.factor(wine_type))
     
-    if(input$Sex =="all"){
-      newData <- ctsib %>% filter(Surface == input$Surface & Vision==input$Vision)
+    #Standardize the data
+    preproc1 <- preProcess(wine_data_ana, method=c("center", "scale"))
+    wine_data_norm <- predict(preproc1, wine_data_ana)
+    wine_data_norm['quality'] <- wine_data_ana['quality']
+    
+    if(input$wine_type =="all"){
+      newData <- wine_data_norm
     }else{
-      newData <- ctsib %>% filter(Surface == input$Surface & Vision==input$Vision & Sex == input$Sex)
+      newData <- wine_data_norm %>% filter(wine_type == input$wine_type)
     }
   })
   
   getPcaResult<-reactive({
     pca_vars<-input$PcaSelectedColumns
-    ctsib_ana_pca<-ctsib_ana
-    for(p in predictors){
-      colm<-colMeans(ctsib_ana_pca[p])
-      colsd<-sqrt(sum((ctsib_ana_pca[p]-colm)^2)/(nrow(ctsib_ana_pca)-1))
-      ctsib_ana_pca[,p]<-(ctsib_ana_pca[,p]-colm)/colsd
-    }
-    PCs<-prcomp(ctsib_ana_pca[,pca_vars], scale=T)
+    wine_data_ana_pca<-wine_data_norm
+    
+    PCs<-prcomp(wine_data_ana_pca[,pca_vars])
     return(list(pcas=PCs))
   })
   
   PCA.results<-reactive({
     t<-getPcaResult()
-    t$pcas})
+    t$pcas}
+  )
   
   getSupervisedResult<-reactive({
     
@@ -59,68 +74,108 @@ shinyServer(function(input, output, session) {
     pct=input$TrainingPercent/100.0
     neighbors=input$NeighborCount
     predictors= input$SelectedColumns
-    print(input$SelectedColumns)
-    subjects<-unique(ctsib_ana$Subject)
     
-    train_sample_size<-floor(pct*length(subjects))
-    train_subj<-sample(subjects,train_sample_size )
-    train_ctsib_ana<-filter(ctsib_ana, Subject %in% train_subj)
-    test_ctsib_ana<-filter(ctsib_ana, !(Subject %in% train_subj))
+    train_idx <- sample(1:nrow(wine_data_ana), floor(pct*nrow(wine_data_ana)))
     
+
+    train_wine_data_ana <- wine_data_norm[train_idx, ]
+    test_wine_data_ana <- wine_data_norm[-train_idx, ]
     
-    for(p in c("Height","Weight","BMI","PI")){
-      colm<-colMeans(train_ctsib_ana[p])
-      colsd<-sqrt(sum((train_ctsib_ana[p]-colm)^2)/(nrow(train_ctsib_ana)-1))
-      train_ctsib_ana[,p]<-(train_ctsib_ana[,p]-colm)/colsd
-      test_ctsib_ana[,p]<-(test_ctsib_ana[,p]-colm)/colsd
-    }
-    
-    if(input$SupervisedMethod=='knn'){
-      fitted.values <- knn(train = train_ctsib_ana[,predictors],
-                           test = test_ctsib_ana[,predictors],
-                           cl = train_ctsib_ana$CTSIB,
-                           k = neighbors, prob=TRUE) #could use CV to determine k
+    response_var <- 'quality_level'
+    if(input$SupervisedMethod=='knn (quality as factor)'){
+      t<-train_wine_data_ana[,c(response_var,predictors)]
+      test<- test_wine_data_ana[,c(response_var,predictors)]
+      ctrl <- trainControl(method="repeatedcv",repeats = 3) #,classProbs=TRUE,summaryFunction = twoClassSummary)
+      #Make the model accessible to other function
+      trained_model <<- train(quality_level ~ ., data = t, method = "knn", trControl = ctrl,  tuneLength = 5)
+      fitted.values<-predict(trained_model, newdata= test)
+
     }
     else{
-      train_ctsib_tmp<-train_ctsib_ana[,c('CTSIB',predictors)]
-      test <- multinom(CTSIB ~ ., data = train_ctsib_tmp)
-      fitted.values<-predict(test,newdata=test_ctsib_ana)
+      if(input$SupervisedMethod=='multinomial (quality as factor)'){
+        #Use the multinomial log-linear models via neural networks.
+        train_wine_data_tmp<-train_wine_data_ana[,c('quality_level',predictors)]
+        test <- multinom(quality_level ~ ., data = train_wine_data_tmp)
+        fitted.values<-predict(test,newdata=test_wine_data_ana)
+        #Make the model accessible to other function
+        trained_model <<- test
+      }
+      else{
+        if(input$SupervisedMethod=='Ridge regression (quality as numeric)'){
+          response_var <- 'quality'
+          #5 fold CV for all relevant models
+          control_cv <- trainControl(method = 'cv', number = 5)
+          lambda_grid <- expand.grid(lambda = 10 ^ seq(-2, 3, .1))
+
+          
+          ridge <- train(quality ~ ., method="ridge", subset=train_idx, data=wine_data_norm[,c(response_var,columns)],
+                         trControl = control_cv,
+                         tuneGrid = lambda_grid)
+          
+          #Make the model accessible to other function
+          trained_model <- ridge
+          #need to figure out how to get model coeffs. Just fit new ridge with besttune? Probably?
+          fitted.values <- predict(ridge, newdata=test_wine_data_ana[,c(response_var,columns)])
+          test_mse<-mean((fitted.values - test_wine_data_ana$quality)^2)
+          result_desc<-paste('The Mean Square Error (MSE) for the training dataset is ', ridge$results$RMSE[1], '<br>and the test MSE is ', test_mse)
+        }
+      }
     }
     
-    fitInfo <- tbl_df(data.frame(predicted=fitted.values, test_ctsib_ana[, c("CTSIB",predictors)]))
-    contingencyTbl<-table(fitInfo$predicted,fitInfo$CTSIB)
-    misClass <- 1 - sum(diag(contingencyTbl))/sum(contingencyTbl)
-    
-    return(list(contingencyTbl=as.data.frame.matrix(contingencyTbl), misclassified=misClass))
+    # Get the confusion matrix for the test results
+    if(response_var=='quality_level'){
+      fitInfo <- tbl_df(data.frame(predicted=fitted.values, test_wine_data_ana[, c(response_var,predictors)]))
+      contingencyTbl<-table(fitInfo$predicted,fitInfo$quality_level)
+      misClass <- 1 - sum(diag(contingencyTbl))/sum(contingencyTbl)
+      result_desc <- paste('Above shows the confusion matrix for the classification of testing data. <br>The misclassification percentage for the testing data is ', round(misClass*100,2))
+      ret_list <-list(contingencyTbl=as.data.frame.matrix(contingencyTbl), result_desc=result_desc)
+    }
+    else{
+      ret_list <-list(contingencyTbl=NA, result_desc=result_desc)
+    }
   })
   
+  observeEvent(input$predict_click, {
+    new_wine <- data.frame(fixed.acidity=input$fixed.acidity, volatile.acidity=input$volatile.acidity, citric.acid=input$citric.acid, residual.sugar=input$residual.sugar,
+                           chlorides=input$chlorides, free.sulfur.dioxide=input$free.sulfur.dioxide, total.sulfur.dioxide=input$total.sulfur.dioxide, density=input$density,
+                           pH=input$pH, sulphates=input$sulphates, alcohol=input$alcohol)
+    if(is.na(trained_model)){
+      output$predicted_quality<-renderText({print("<b style='color:#0000FF'>There is no trained model yet.</b>")})
+    }
+    else{
+      predicted_respose<-predict(trained_model, newdata=new_wine)
+      output$predicted_quality<-renderText({print(paste("<b style='color:#0000FF'>The predicted wine quality based on your input is:",predicted_respose[[1]], "</b>"))})
+    }
+  })
   
   plotInput <- reactive({
     newData <- getData()
     
     #create plot
-    g <- ggplot(newData, aes(x = CTSIB, y = Weight))
-    if(input$conservation){
-      g + geom_point(size = input$size, aes(col = Sex))
+    g <- ggplot(newData, aes(x = quality_level, y = citric.acid))
+    if(input$cb_wine_type){
+      g + geom_point() + geom_jitter(aes(colour = wine_type))
     } else {
-      g + geom_point(size = input$size)
+      g + geom_boxplot() + geom_jitter()
     }
   })
   
+  
+  
   #create plot
-  output$ctsibPlot <- renderPlot({
+  output$wine_dataPlot <- renderPlot({
     plotInput()
   })
   
   
   #create output of observations    
-  output$table <- renderTable({
-    getData()
-  })
+  output$table <- DT::renderDataTable(
+    DT::datatable(getData(), options = list(pageLength = 10))%>% formatRound(columns = c(1:11), digits = 2)
+  )
   
   output$downloadData <- downloadHandler(
     filename = function() {
-      paste("CTSIB_",input$Vision, "_", input$Surface, ".csv", sep = "")
+      paste("wine_data_",input$wine_type, ".csv", sep = "")
     },
     content = function(file) {
       write.csv(getData(), file, row.names = FALSE)
@@ -128,21 +183,24 @@ shinyServer(function(input, output, session) {
   )
   
   output$downloadPlot <- downloadHandler(
-    filename = function() { paste("CTSIB_",input$Vision, "_", input$Surface, '.png', sep='') },
+    filename = function() { paste("wine_data_",input$wine_type, '.png', sep='') },
     content = function(file) {
       ggsave(file,plotInput())
     }
   )
   
   
-  output$click_info <- renderPrint({
-    # Because it's a ggplot2, we don't need to supply xvar or yvar; if this
-    # were a base graphics plot, we'd need those.
-    nearPoints(getData(), input$plot1_click, addDist = TRUE)
+  output$plot_clicked_points <- DT::renderDataTable({
+    # With base graphics, we need to explicitly tell it which variables were
+    # used; with ggplot2, we don't.
+    res <- nearPoints(getData(), input$plot_click, threshold = 5, maxpoints = 10, addDist = TRUE) 
+
+    datatable(res)%>% formatRound(columns = c(1:11), digits = 2)
   })
   
-  output$brush_info <- renderPrint({
-    brushedPoints(getData(), input$plot1_brush)
+  output$brush_info <- DT::renderDataTable({
+    res <-  brushedPoints(getData(), input$plot1_brush)
+    datatable(res)%>% formatRound(columns = c(1:11), digits = 2)
   })
   
   
@@ -153,7 +211,7 @@ shinyServer(function(input, output, session) {
   
   output$misclassifiedPct<-renderText({
     rslt<-getSupervisedResult()
-    print(paste0("Miss classified percentage: ",rslt$misclassified*100.0))
+    print(paste("By using the ", input$SupervisedMethod, "I got the result of ", rslt$result_desc ))
   })
   
   
@@ -163,23 +221,15 @@ shinyServer(function(input, output, session) {
     plot.background = element_blank()
   )	
   
-  
-  #file info	
-  output$filetable <- renderTable({
-    tmp<-ctsib_ana
-    tmp<-tmp[,seq_along(1:ncol(tmp))<=10] # show max 10 columns and binf head tail calls
-    rbind(head(tmp,10),tail(tmp,10))
-    
-  })
-  
-  
   #make componentplot
   output$componentplot <- renderPlot({
-    #autoplot(getPcaResult()$pcas, data = ctsib_ana, colour = 'CTSIB', loadings = TRUE,loadings.label = TRUE)
+    #autoplot(getPcaResult()$pcas, data = wine_data_ana, colour = 'wine_data', loadings = TRUE,loadings.label = TRUE)
     PCs<-getPcaResult()$pcas
     st<-min(as.integer(input$NumberOfPcs),length(PCs)-1)
+    autoplot(PCs, data = wine_data_ana, colour = 'quality_level', loadings = TRUE)
+    # ggbiplot(PCs,ellipse=TRUE,  labels=rownames(wine_data_ana), groups=wine_data_ana$quality_level)
     
-    ggbiplot(PCs, obs.scale = 1, var.scale = 1, ellipse = input$plotEllipse, choices=st:(st+1), circle = input$plotCircle, var.axes=TRUE, labels=c(ctsib_ana[,"CTSIB"]), groups=as.factor(c(ctsib_ana[,"CTSIB"])))
+    # ggbiplot(PCs, obs.scale = 1, var.scale = 1, ellipse = input$plotEllipse, choices=st:(st+1), circle = input$plotCircle, var.axes=TRUE, labels=c(wine_data_ana[,"quality_level"]), groups=as.factor(c(wine_data_ana[,"quality_level"])))
     
   })
   
