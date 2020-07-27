@@ -165,6 +165,7 @@ Output variable (based on sensory data):<hr>
                                 
                                 h5("Predict the response quality based on the following inputs (as I have already stardarized the data, the range will be 0, 1 (with default of 0.5):"),
                                 
+                                # User's input for the predictors.
                                 numericInput(inputId='fixed.acidity', label='fixed.acidity', value = 0.5),
                                 numericInput(inputId='volatile.acidity', label='volatile.acidity', value = 0.5),
                                 numericInput(inputId='citric.acid', label='citric.acid', value = 0.5),

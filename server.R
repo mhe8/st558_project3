@@ -5,7 +5,7 @@ library(ggplot2)
 library(class)
 library(tidyverse)
 library(knitr)
-# library(rgl)
+library(caret)
 library(ggfortify)
 library(nnet)
 library(DT)
@@ -38,16 +38,17 @@ shinyServer(function(input, output, session) {
     wine_data = union(red_wine_data, white_wine_data)
     
     #Drop rows with NA
-    wine_data_ana<-drop_na(wine_data)
+    wine_data_ana<<-drop_na(wine_data)
     
     #Change the column of quality into levels
-    wine_data_ana<-mutate(wine_data_ana,quality_level=as.factor(quality), wine_type = as.factor(wine_type))
+    wine_data_ana<<-mutate(wine_data_ana,quality_level=as.factor(quality), wine_type = as.factor(wine_type))
     
     #Standardize the data
     preproc1 <- preProcess(wine_data_ana, method=c("center", "scale"))
-    wine_data_norm <- predict(preproc1, wine_data_ana)
-    wine_data_norm['quality'] <- wine_data_ana['quality']
+    wine_data_norm <<- predict(preproc1, wine_data_ana)
+    wine_data_norm['quality'] <<- wine_data_ana['quality']
     
+    #If we want to keep all the data, then don't apply filter, otherwise, apply filter
     if(input$wine_type =="all"){
       newData <- wine_data_norm
     }else{
@@ -55,6 +56,7 @@ shinyServer(function(input, output, session) {
     }
   })
   
+  # Use the PCA method to get the components
   getPcaResult<-reactive({
     pca_vars<-input$PcaSelectedColumns
     wine_data_ana_pca<-wine_data_norm
@@ -68,6 +70,7 @@ shinyServer(function(input, output, session) {
     t$pcas}
   )
   
+  # Run supervised methods.
   getSupervisedResult<-reactive({
     
     set.seed(100)
@@ -226,7 +229,7 @@ shinyServer(function(input, output, session) {
     #autoplot(getPcaResult()$pcas, data = wine_data_ana, colour = 'wine_data', loadings = TRUE,loadings.label = TRUE)
     PCs<-getPcaResult()$pcas
     st<-min(as.integer(input$NumberOfPcs),length(PCs)-1)
-    autoplot(PCs, data = wine_data_ana, colour = 'quality_level', loadings = TRUE)
+    autoplot(PCs, data = wine_data_ana, colour = 'quality', loadings = TRUE)
     # ggbiplot(PCs,ellipse=TRUE,  labels=rownames(wine_data_ana), groups=wine_data_ana$quality_level)
     
     # ggbiplot(PCs, obs.scale = 1, var.scale = 1, ellipse = input$plotEllipse, choices=st:(st+1), circle = input$plotCircle, var.axes=TRUE, labels=c(wine_data_ana[,"quality_level"]), groups=as.factor(c(wine_data_ana[,"quality_level"])))
