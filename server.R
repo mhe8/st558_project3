@@ -25,12 +25,12 @@ shinyServer(function(input, output, session) {
   trained_model<-NA
   getData <- reactive({
     #Read the red wine data
-    dataurl="https://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-red.csv"
+    dataurl="https://raw.githubusercontent.com/mhe8/st558_project3/master/winequality-red.csv"
     red_wine_data=read.table(dataurl,sep = ";", header=TRUE)
     red_wine_data['wine_type'] = 'red'
     
     #Read the white wine data
-    dataurl="https://archive.ics.uci.edu/ml/machine-learning-databases/wine-quality/winequality-white.csv"
+    dataurl="https://raw.githubusercontent.com/mhe8/st558_project3/master/winequality-white.csv"
     white_wine_data=read.table(dataurl,sep = ";", header=TRUE)
     white_wine_data['wine_type'] = 'white'
     
